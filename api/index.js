@@ -17,7 +17,16 @@ createServer(async (request, response) => {
     return;
   }
 
-  createReadStream("../assets/animeflv.csv").pipe(response);
+  Readable.toWeb(createReadStream("../assets/animeflv.csv")).pipeTo(
+    new WritableStream({
+      write(chunk) {
+        response.write(chunk);
+      },
+      close() {
+        response.end();
+      },
+    })
+  );
 
   response.writeHead(200, headers);
 })
