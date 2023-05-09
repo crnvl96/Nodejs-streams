@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
 import { createReadStream } from "node:fs";
-import { Readable } from "node:stream";
-import { WritableStream } from "node:stream/web";
+import { Readable, Transform } from "node:stream";
+import { WritableStream, TransformStream } from "node:stream/web";
+import { setTimeout } from "node:timers/promises";
+import csvtojson from "csvtojson";
 
 const PORT = 3000;
 
@@ -16,19 +18,48 @@ createServer(async (request, response) => {
     response.end();
     return;
   }
+  let items = 0;
+  const abortController = new AbortController();
+  request.once("close", () => {
+    console.log(`connection was closed!`, items);
+    abortController.abort();
+  });
+  try {
+    response.writeHead(200, headers);
 
-  Readable.toWeb(createReadStream("../assets/animeflv.csv")).pipeTo(
-    new WritableStream({
-      write(chunk) {
-        response.write(chunk);
-      },
-      close() {
-        response.end();
-      },
-    })
-  );
-
-  response.writeHead(200, headers);
+    await Readable.toWeb(createReadStream("../assets/animeflv.csv"))
+      .pipeThrough(Transform.toWeb(csvtojson()))
+      .pipeThrough(
+        new TransformStream({
+          transform(chunk, controller) {
+            const data = JSON.parse(Buffer.from(chunk));
+            const mappedData = {
+              title: data.title,
+              description: data.description,
+              url_anime: data.url_anime,
+            };
+            controller.enqueue(JSON.stringify(mappedData).concat("\n"));
+          },
+        })
+      )
+      .pipeTo(
+        new WritableStream({
+          async write(chunk) {
+            await setTimeout(200);
+            items++;
+            response.write(chunk);
+          },
+          close() {
+            response.end();
+          },
+        }),
+        {
+          signal: abortController.signal,
+        }
+      );
+  } catch (error) {
+    if (!error.message.includes("abort")) throw error;
+  }
 })
   .listen(PORT)
   .on("listening", (_) => console.log(`server is running at ${PORT}`));
